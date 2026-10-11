@@ -1,0 +1,351 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script defer src="https://cdn.jsdelivr.net/npm/mathlive@0.111.1/mathlive.min.js"
+        onerror="document.getElementById('mf').outerHTML='<p>Could not load the math editor (MathLive) - check the internet connection.</p>'"></script>
+<style>
+  :root {
+    --bg: #0e1117; --text: #fafafa; --field: #262730; --border: #3d4150; --primary: #ff4b4b;
+    --btn: #31333f; --btn-func: #2a2d3a; --btn-op: #3d4f7c; --btn-const: #54447e;
+    --btn-del: #8f3c3c; --btn-eq: #2b8a52; --btn-nav: #34434b;
+  }
+  :root.light {
+    --bg: #ffffff; --text: #262730; --field: #f6f7fb; --border: #d3d6e0;
+    --btn: #e8eaf1; --btn-func: #eef0f5; --btn-op: #d7def3; --btn-const: #e4dcf5;
+    --btn-del: #f6d5d5; --btn-eq: #c9ecd6; --btn-nav: #dde5e8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 2px; background: transparent; color: var(--text);
+         font-family: "Source Sans Pro", "Segoe UI", system-ui, sans-serif; }
+  math-field {
+    display: block; width: 100%; min-height: 76px; font-size: 30px; padding: 10px 14px;
+    border-radius: 10px; border: 2px solid var(--border); background: var(--field); color: var(--text);
+    --caret-color: var(--primary); --selection-background-color: rgba(90,120,220,.35);
+    --placeholder-color: #8a90a8; --primary-color: var(--primary);
+  }
+  math-field:focus-within { border-color: var(--primary); outline: none; }
+  math-field::part(menu-toggle) { display: none; }
+  math-field::part(virtual-keyboard-toggle) { display: none; }
+  .pads { display: grid; grid-template-columns: 6fr 5fr; gap: 10px; margin-top: 10px; }
+  .grid { display: grid; gap: 5px; }
+  .funcs { grid-template-columns: repeat(6, 1fr); }
+  .keys { grid-template-columns: repeat(5, 1fr); }
+  button {
+    font: inherit; font-size: 16px; color: var(--text); background: var(--btn);
+    border: none; border-radius: 8px; padding: 10px 2px; cursor: pointer; min-width: 0;
+    transition: filter .1s; user-select: none; -webkit-user-select: none; touch-action: manipulation;
+  }
+  button:hover { filter: brightness(1.18); }
+  button:active { filter: brightness(1.35); }
+  .f { background: var(--btn-func); }
+  .o { background: var(--btn-op); font-size: 19px; }
+  .c { background: var(--btn-const); }
+  .d { font-size: 19px; font-weight: 600; }
+  .x { background: var(--btn-del); }
+  .n { background: var(--btn-nav); }
+  .eq { background: var(--btn-eq); grid-column: span 2; font-size: 21px; font-weight: 700; }
+  .hint { font-size: 12.5px; opacity: .65; margin-top: 8px; line-height: 1.45; }
+  @media (max-width: 640px) {
+    .pads { grid-template-columns: 1fr; }
+    button { padding: 11px 0; font-size: 15px; }
+    math-field { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+<math-field id="mf"></math-field>
+<div class="pads">
+  <div class="grid funcs" id="funcs"></div>
+  <div class="grid keys" id="keys"></div>
+</div>
+<div class="hint">
+  Type with the keyboard: <b>/</b> makes a fraction, <b>^</b> an exponent, <b>sqrt</b> a root, <b>pi</b> π.
+  Arrows move through fractions, Tab jumps to the next empty box, Enter solves, Esc clears.
+  Select something, then click a function to wrap it.
+</div>
+
+<script>
+// ---------- minimal Streamlit component protocol (no build step needed) ----------
+function send(type, data) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
+}
+let lastHeight = 0;
+function setHeight() {               // measure the content, not the frame (that would feed back)
+  const h = Math.ceil(document.body.getBoundingClientRect().height) + 6;
+  if (h !== lastHeight) { lastHeight = h; send("streamlit:setFrameHeight", { height: h }); }
+}
+let nonce = Date.now();
+function sendValue(action) {
+  send("streamlit:setComponentValue", {
+    value: { latex: mf.value, action, nonce: ++nonce }, dataType: "json" });
+}
+
+// ---------- buttons: [label, LaTeX to insert | command, css class] ----------
+// #0 = the selection (or an empty box), #? = an empty box, #@ = the selection or what's left of the cursor
+const FUNCS = [
+  ["√x", "\\sqrt{#0}"], ["∛x", "\\sqrt[3]{#0}"], ["ⁿ√x", "\\sqrt[#?]{#0}"],
+  ["x²", "#@^{2}"], ["xʸ", "#@^{#?}"], ["a/b", "\\frac{#0}{#?}"],
+  ["π", "\\pi", "c"], ["e", "e", "c"], ["i", "i", "c"],
+  ["|x|", "\\left|#0\\right|"], ["1/x", "\\frac{1}{#0}"], ["n!", "#@!"],
+  ["sin", "\\sin\\left(#0\\right)"], ["cos", "\\cos\\left(#0\\right)"], ["tan", "\\tan\\left(#0\\right)"],
+  ["ln", "\\ln\\left(#0\\right)"], ["log", "\\log\\left(#0\\right)"], ["eˣ", "e^{#0}"],
+  ["sin⁻¹", "\\arcsin\\left(#0\\right)"], ["cos⁻¹", "\\arccos\\left(#0\\right)"],
+  ["tan⁻¹", "\\arctan\\left(#0\\right)"], ["logₐ", "\\log_{#?}\\left(#0\\right)"],
+  ["10ˣ", "10^{#0}"], ["EE", "E"],
+  ["sinh", "\\sinh\\left(#0\\right)"], ["cosh", "\\cosh\\left(#0\\right)"],
+  ["tanh", "\\tanh\\left(#0\\right)"], ["Re", "\\operatorname{Re}\\left(#0\\right)"],
+  ["Im", "\\operatorname{Im}\\left(#0\\right)"], ["conj", "\\operatorname{conj}\\left(#0\\right)"],
+  ["arg", "\\arg\\left(#0\\right)"], ["polar", "\\operatorname{polar}\\left(#0,#?\\right)"],
+  ["ans", "\\operatorname{ans}", "c"], ["(", "\\left(#0\\right)"], [")", ")"], [",", ","],
+];
+const KEYS = [
+  ["7", "7", "d"], ["8", "8", "d"], ["9", "9", "d"], ["÷", "@fraction", "o"], ["⌫", "@deleteBackward", "x"],
+  ["4", "4", "d"], ["5", "5", "d"], ["6", "6", "d"], ["×", "\\cdot", "o"], ["C", "@clear", "x"],
+  ["1", "1", "d"], ["2", "2", "d"], ["3", "3", "d"], ["−", "-", "o"], ["(", "\\left(#0\\right)", "o"],
+  ["0", "0", "d"], [".", ".", "d"], ["i", "i", "c"], ["+", "+", "o"], [")", ")", "o"],
+  ["◀", "@moveToPreviousChar", "n"], ["▶", "@moveToNextChar", "n"], ["⇥", "@moveToNextPlaceholder", "n"],
+  ["=", "@evaluate", "eq"],
+];
+const OPERATORS = "+-*/^!";
+let mf, justEvaluated = false, lastInsertNonce = null, inputTimer = null;
+
+function act(what) {
+  mf.focus();
+  frames = [];
+  if (what === "@evaluate") return evaluate();
+  if (what === "@fraction") {
+    if (justEvaluated) startFromAns();
+    justEvaluated = false;
+    makeFraction();
+    return changed();
+  }
+  if (what === "@clear") { mf.value = ""; justEvaluated = false; return changed(); }
+  if (what.startsWith("@")) { justEvaluated = false; mf.executeCommand(what.slice(1)); return changed(); }
+  // after "=": an operator continues from ans, anything else wraps / replaces the selected expression
+  if (justEvaluated && /^[+\-]$|^\\cdot$|^#@/.test(what)) startFromAns();
+  justEvaluated = false;
+  mf.insert(what, { selectionMode: "placeholder", focus: true });
+  changed();
+}
+
+// ---- typing the linear way still gives hand-written results:
+//      (1+i)/(2-i) -> fraction without brackets,  1/2+3 -> ½ + 3,  2^(1/3)+1 -> 2^⅓ + 1
+let frames = [];          // boxes opened by typing / or ^ : {den, group, depth, filled}
+let exitedDen = false;    // a bracketed denominator was just closed with )
+const topFrame = () => frames[frames.length - 1];
+
+function exitBox() { mf.executeCommand("moveToNextChar"); frames.pop(); }
+function exitFilled() { while (frames.length && !topFrame().group && topFrame().filled) exitBox(); }
+
+const atEnd = () => mf.selectionIsCollapsed && mf.position === mf.lastOffset;
+
+function setValueAndFill(latex) {   // replace everything, put the cursor in the last empty box
+  mf.value = latex;
+  mf.position = mf.lastOffset;
+  mf.executeCommand("moveToPreviousPlaceholder");
+}
+
+function matchingBrace(v, close) {  // index of the { matching the } at `close`
+  let depth = 0;
+  for (let k = close; k >= 0; k--) {
+    if (v[k - 1] === "\\") continue;
+    if (v[k] === "}") depth++;
+    else if (v[k] === "{" && --depth === 0) return k;
+  }
+  return -1;
+}
+
+function matchingLeft(v) {          // index of the \left matching the trailing \right..., or -1
+  const marks = [...v.matchAll(/\\left|\\right/g)];
+  let depth = 0;
+  for (let k = marks.length - 1; k >= 0; k--) {
+    depth += marks[k][0] === "\\right" ? 1 : -1;
+    if (depth === 0) return marks[k].index;
+  }
+  return -1;
+}
+
+function trailingOperandStart(v) {  // where the operand that ends the expression begins
+  const STOP = new Set(["\\cdot", "\\times", "\\div", "\\pm", "\\mp", "\\left", "\\right"]);
+  let i = v.length;
+  while (i > 0) {
+    const head = v.slice(0, i);
+    if (/\\right(\\[a-zA-Z]+|.)$/.test(head)) {          // a bracket group (and a function before it)
+      const at = matchingLeft(head);
+      if (at < 0) break;
+      i = at;
+      continue;
+    }
+    if (v[i - 1] === "}" && v[i - 2] !== "\\") {
+      const at = matchingBrace(v, i - 1);
+      if (at < 0) break;
+      i = at;
+      continue;
+    }
+    if (v[i - 1] === "]") { const at = v.lastIndexOf("[", i - 1); if (at < 0) break; i = at; continue; }
+    const cmd = head.match(/\\[a-zA-Z]+$/);
+    if (cmd) { if (STOP.has(cmd[0])) break; i -= cmd[0].length; continue; }
+    if (/[0-9A-Za-z.!^_]/.test(v[i - 1])) { i--; continue; }
+    break;
+  }
+  return i;
+}
+
+function makeFraction() {
+  // what's left of the cursor goes on top; a bracket group loses its brackets
+  if (atEnd()) {
+    const v = mf.value, start = trailingOperandStart(v);
+    let num = v.slice(start);
+    if (num) {
+      if (num.startsWith("\\left(") && num.endsWith("\\right)") && matchingLeft(num) === 0) num = num.slice(6, -7);
+      setValueAndFill(v.slice(0, start) + `\\frac{${num}}{\\placeholder{}}`);
+      return true;
+    }
+  }
+  // elsewhere let MathLive take the operand; if there was one, the cursor lands in the denominator
+  const pos = mf.position;
+  const prev = mf.selectionIsCollapsed && pos > 0 ? mf.getValue(pos - 1, pos, "latex") : "";
+  mf.insert("\\frac{#@}{#?}", { selectionMode: "placeholder" });
+  return !mf.selectionIsCollapsed || (prev !== "" && !/^(\+|-|\\cdot|\\times|,|.*\{\}?)$/.test(prev));
+}
+
+function powerOnDenominator() {      // (1+i)/(2-i)^2 : wrap the last denominator and raise it
+  const v = mf.value;
+  if (!atEnd() || !/\}$/.test(v)) return false;
+  let depth = 0, open = -1;
+  for (let k = v.length - 1; k >= 0; k--) {
+    if (v[k] === "}" && v[k - 1] !== "\\") depth++;
+    else if (v[k] === "{" && v[k - 1] !== "\\") { depth--; if (depth === 0) { open = k; break; } }
+  }
+  if (open < 0) return false;
+  const den = v.slice(open + 1, -1);
+  setValueAndFill(v.slice(0, open) + `{\\left(${den}\\right)^{\\placeholder{}}}`);
+  return true;
+}
+
+function onKey(e) {        // true = handled here, MathLive must not see the key
+  const k = e.key, afterDen = exitedDen;
+  exitedDen = false;
+  if (k === "/") {
+    exitFilled();
+    // only track the box if the cursor ended up in the denominator
+    if (makeFraction()) frames.push({ den: true }); else frames = [];
+    return true;
+  }
+  if (k === "^") {
+    if (afterDen && powerOnDenominator()) {   // the power belongs to the bracketed denominator
+      frames.push({ den: true, filled: true }, {});
+      return true;
+    }
+    frames.push({});
+    return false;
+  }
+  if (k === "(") {
+    const t = topFrame();
+    if (t && !t.group && !t.filled) { t.group = true; t.depth = 0; return true; }   // the box already groups
+    if (t && t.group) t.depth++;
+    if (t) t.filled = true;
+    return false;
+  }
+  if (k === ")") {
+    while (frames.length && !topFrame().group) exitBox();
+    const t = topFrame();
+    if (t && t.depth > 0) { t.depth--; return false; }
+    if (t) { exitBox(); exitedDen = !!t.den; return true; }
+    return false;
+  }
+  if ("+-*".includes(k)) { exitFilled(); if (topFrame()) topFrame().filled = true; return false; }
+  if (k.length === 1) { if (topFrame()) topFrame().filled = true; return false; }
+  if (!["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(k)) frames = [];
+  return false;
+}
+
+function startFromAns() {
+  mf.value = "\\operatorname{ans}";
+  mf.position = mf.lastOffset;
+}
+
+function evaluate() {
+  if (!mf.value.trim()) return;
+  clearTimeout(inputTimer);          // a pending live-preview update must not arrive after "="
+  frames = [];
+  sendValue("eval");
+  justEvaluated = true;
+  mf.executeCommand("selectAll");
+}
+
+function changed() {
+  if (justEvaluated) return;         // the result for this expression is already shown
+  clearTimeout(inputTimer);
+  inputTimer = setTimeout(() => sendValue("input"), 250);
+}
+
+function build(container, list) {
+  for (const [label, what, cls] of list) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.className = cls || "f";
+    b.tabIndex = -1;
+    b.addEventListener("mousedown", e => e.preventDefault());   // keep the field's cursor/selection
+    b.addEventListener("click", () => act(what));
+    container.appendChild(b);
+  }
+}
+
+function applyTheme(theme) {
+  if (!theme) return;
+  document.documentElement.classList.toggle("light", theme.base === "light");
+  if (theme.primaryColor) document.documentElement.style.setProperty("--primary", theme.primaryColor);
+}
+
+window.addEventListener("message", e => {
+  if (!e.data || e.data.type !== "streamlit:render") return;
+  const args = e.data.args || {};
+  applyTheme(e.data.theme);
+  const ins = args.insert;
+  if (ins && ins.nonce !== lastInsertNonce && mf && customElements.get("math-field")) {
+    lastInsertNonce = ins.nonce;
+    justEvaluated = false;
+    if (ins.mode === "replace") { mf.value = ins.latex; mf.position = mf.lastOffset; }
+    else mf.insert(ins.latex, { focus: true });
+    mf.focus();
+    sendValue("input");
+  }
+  setHeight();
+});
+
+window.addEventListener("DOMContentLoaded", async () => {
+  mf = document.getElementById("mf");
+  build(document.getElementById("funcs"), FUNCS);
+  build(document.getElementById("keys"), KEYS);
+  send("streamlit:componentReady", { apiVersion: 1 });
+  setHeight();
+  await customElements.whenDefined("math-field");
+  const ML = "https://cdn.jsdelivr.net/npm/mathlive@0.111.1";
+  MathfieldElement.fontsDirectory = ML + "/fonts";
+  MathfieldElement.soundsDirectory = ML + "/sounds";
+  mf.mathVirtualKeyboardPolicy = "manual";
+  mf.smartFence = true;
+  mf.smartSuperscript = false;      // keep typing in an exponent until you leave it
+  mf.addEventListener("input", changed);
+  mf.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); evaluate(); return; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); act("@clear"); return; }
+    if (justEvaluated && e.key.length === 1) {
+      if (OPERATORS.includes(e.key)) startFromAns();
+      justEvaluated = false;
+    } else if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) {
+      justEvaluated = false;
+    }
+    if (!e.ctrlKey && !e.metaKey && onKey(e)) { e.preventDefault(); e.stopPropagation(); changed(); }
+  }, { capture: true });
+  mf.addEventListener("pointerdown", () => { frames = []; justEvaluated = false; });
+  new ResizeObserver(setHeight).observe(document.body);
+  setHeight();
+  mf.focus();
+});
+</script>
+</body>
+</html>
