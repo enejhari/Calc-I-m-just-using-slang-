@@ -1604,7 +1604,7 @@ class CalculatorApp:
         self.R = MathRenderer(family, round(10 * scale))
         self.res_px = round(22 * scale)
 
-        root.title("Calc (i'm just using slang)")
+        root.title("Complex calculator")
         root.configure(bg=THEME["bg"])
         root.minsize(1000, 680)
         root.columnconfigure(0, weight=3)
