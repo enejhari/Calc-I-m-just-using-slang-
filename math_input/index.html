@@ -343,6 +343,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   }, { capture: true });
   mf.addEventListener("pointerdown", () => { frames = []; justEvaluated = false; });
   new ResizeObserver(setHeight).observe(document.body);
+  // inside a hidden tab the frame measures 0; re-measure once it is shown again
+  window.addEventListener("resize", setHeight);
+  setInterval(setHeight, 700);
   setHeight();
   mf.focus();
 });
