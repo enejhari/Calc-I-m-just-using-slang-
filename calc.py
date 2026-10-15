@@ -1,3 +1,30 @@
+#!/usr/bin/env python3
+"""
+calc.py - a calculator with full complex-number support.
+
+Run it:
+    python calc.py                     open the GUI (fractions, roots and powers are drawn
+                                       like on paper: type / for a fraction, ^ for a power)
+    python calc.py "(2+3i)*(1-i)"      evaluate once and print the result
+    python calc.py --cli               interactive terminal mode
+    python calc.py --deg "sin(30)"     same, with angles in degrees
+
+Syntax:
+    + - * / ^  ( )  !          (also × ÷ − √ ∛ π ² ³ are understood)
+    i or j                     imaginary unit         e.g.  3+4i, 2i(1-i)
+    pi, π, e, ans              constants / last answer
+    2E5                        scientific notation (capital E; lowercase e is Euler's number)
+    2π, 3(1+i), (1+i)(1-i)     implicit multiplication
+    sqrt cbrt root(x,n) abs arg re im conj exp ln log log(x,b) log2
+    sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh
+    polar(r,θ) floor ceil round
+
+Exact rational arithmetic is used wherever possible (1/3 + 1/6 = 1/2,
+sqrt(-4) = 2i, sqrt(3+4i) = 2+i, (1+i)^8 = 16).  Otherwise results use
+principal complex values (e.g. ln(-1) = πi, i^i = e^(-π/2)).
+Note: ∛ / root(x,n) of a negative real with odd n returns the real root.
+"""
+
 import cmath
 import copy
 import math
@@ -625,6 +652,22 @@ class Evaluator:
             if not (math.isfinite(z.real) and math.isfinite(z.imag)):
                 raise CalcError("Result is undefined or too large")
         return v
+
+
+def mat_mul(a, b):
+    """Product of two matrices given as lists of rows of numbers; exact where the entries are."""
+    if not a or not b or len(a[0]) != len(b):
+        raise CalcError("A needs as many columns as B has rows")
+    out = []
+    for row in a:
+        new_row = []
+        for j in range(len(b[0])):
+            s = Q(0)
+            for k, x in enumerate(row):
+                s = add(s, mul(x, b[k][j]))
+            new_row.append(s)
+        out.append(new_row)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1604,7 +1647,7 @@ class CalculatorApp:
         self.R = MathRenderer(family, round(10 * scale))
         self.res_px = round(22 * scale)
 
-        root.title("Complex calculator")
+        root.title("Complex Calculator")
         root.configure(bg=THEME["bg"])
         root.minsize(1000, 680)
         root.columnconfigure(0, weight=3)
