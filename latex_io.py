@@ -1,10 +1,3 @@
-"""
-Bridge between the web editor (MathLive, which speaks LaTeX) and the engine in calc.py.
-
-    latex_to_expr(r"\frac{1+i}{2}", deg)  ->  "((1+i)/(2))"    (text the calc.py parser understands)
-    value_latex(value)                    ->  r"\frac{1}{2}+\frac{7}{2}i"
-"""
-
 import re
 
 from calc import FUNCS, CalcError, value_parts
