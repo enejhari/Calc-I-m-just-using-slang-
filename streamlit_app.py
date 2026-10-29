@@ -1,12 +1,3 @@
-
-"""
-Web version of the complex calculator.
-
-Run locally:   streamlit run streamlit_app.py
-Deploy:        push this folder to GitHub, then create an app on share.streamlit.io
-               with streamlit_app.py as the main file.
-"""
-
 import itertools
 import math
 from pathlib import Path
@@ -15,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from calc import CalcError, Evaluator, Q, format_value, mat_mul
+from calc import CalcError, Evaluator, Q, format_value, mat_det, mat_inv, mat_mul
 from latex_io import latex_to_expr, value_latex
 
 st.set_page_config(page_title="Complex Calculator", page_icon="🧮", layout="centered")
@@ -183,8 +174,10 @@ def bmatrix(m, decimals=False):
         if decimals:
             main, dec, _ = format_value(v, deg)
             return dec or main
-        return value_latex(v)
-    rows = r" \\ ".join(" & ".join(cell(v) for v in row) for row in m)
+        return value_latex(v).replace(r"\frac", r"\dfrac")    # full-size fractions in cells
+    cells = [[cell(v) for v in row] for row in m]
+    gap = r" \\[6pt] " if any("frac" in c for row in cells for c in row) else r" \\ "
+    rows = gap.join(" & ".join(row) for row in cells)
     return rf"\begin{{bmatrix}} {rows} \end{{bmatrix}}"
 
 
@@ -197,9 +190,19 @@ def refill(name, texts):
     ss[f"{name}_shape"] = None
 
 
-def use_result_as_a(texts):
+def number_latex(v, decimals=False):
+    if decimals:
+        main, dec, _ = format_value(v, deg)
+        return dec or main
+    return value_latex(v)
+
+
+def use_result_as_a(texts, square):
     refill("A", texts)
-    ss.m_inner = len(texts[0])
+    if square:
+        ss.m_n = len(texts)
+    else:
+        ss.m_inner = len(texts[0])
 
 
 def clear_matrices():
@@ -207,37 +210,78 @@ def clear_matrices():
     refill("B", [[]])
 
 
+def result_buttons(m, square, help_text):
+    texts = [[format_value(v, deg)[0] for v in row] for row in m]
+    b1, b2, _ = st.columns([1.3, 1, 2])
+    b1.button("Use result as A", on_click=use_result_as_a, args=(texts, square), width="stretch",
+              help=help_text)
+    b2.button("Clear", on_click=clear_matrices, width="stretch")
+
+
+CELL_HINT = ("Each cell takes any calculator expression: `3+4i`, `1/2`, `sqrt(2)`, `2pi`, "
+             "`e^(i*pi/3)`, `ans` … Empty cells count as 0.")
+OPS = {"mul": "A · B", "det": "det(A)", "inv": "A⁻¹ (inverse)"}
+
 with tab_mat:
-    st.markdown("**Matrix multiplication**  A · B")
+    op = st.radio("Operation", list(OPS), format_func=OPS.get, horizontal=True, key="m_op")
     sizes = list(range(1, MAX_SIZE + 1))
-    s1, s2, s3 = st.columns(3)
-    a_rows = s1.selectbox("Rows of A", sizes, index=1, key="m_a_rows")
-    inner = s2.selectbox("Columns of A = rows of B", sizes, index=1, key="m_inner")
-    b_cols = s3.selectbox("Columns of B", sizes, index=1, key="m_b_cols")
 
-    ca, cb = st.columns(2)
-    with ca:
-        st.markdown(f"**A** ({a_rows}×{inner})")
-        a_cells = matrix_editor("A", a_rows, inner)
-    with cb:
-        st.markdown(f"**B** ({inner}×{b_cols})")
-        b_cells = matrix_editor("B", inner, b_cols)
-    st.caption("Each cell takes any calculator expression: `3+4i`, `1/2`, `sqrt(2)`, `2pi`, "
-               "`e^(i*pi/3)`, `ans` … Empty cells count as 0.")
+    if op == "mul":
+        s1, s2, s3 = st.columns(3)
+        a_rows = s1.selectbox("Rows of A", sizes, index=1, key="m_a_rows")
+        inner = s2.selectbox("Columns of A = rows of B", sizes, index=1, key="m_inner")
+        b_cols = s3.selectbox("Columns of B", sizes, index=1, key="m_b_cols")
+        ca, cb = st.columns(2)
+        with ca:
+            st.markdown(f"**A** ({a_rows}×{inner})")
+            a_cells = matrix_editor("A", a_rows, inner)
+        with cb:
+            st.markdown(f"**B** ({inner}×{b_cols})")
+            b_cells = matrix_editor("B", inner, b_cols)
+        st.caption(CELL_HINT)
+        try:
+            A = parse_matrix("A", a_cells)
+            B = parse_matrix("B", b_cells)
+            C = mat_mul(A, B)
+        except CalcError as err:
+            st.error(str(err))
+        else:
+            decimals = st.toggle("Show decimals", key="m_decimals")
+            st.latex(rf"A \cdot B = {bmatrix(C, decimals)}")
+            with st.expander("Full product"):
+                st.latex(rf"{bmatrix(A, decimals)} \cdot {bmatrix(B, decimals)} = "
+                         rf"{bmatrix(C, decimals)}")
+            result_buttons(C, False, "Put A·B into A, e.g. to multiply by B again")
 
-    try:
-        A = parse_matrix("A", a_cells)
-        B = parse_matrix("B", b_cells)
-        C = mat_mul(A, B)
-    except CalcError as err:
-        st.error(str(err))
     else:
-        decimals = st.toggle("Show decimals", key="m_decimals")
-        st.latex(rf"A \cdot B = {bmatrix(C, decimals)}")
-        with st.expander("Full product"):
-            st.latex(rf"{bmatrix(A, decimals)} \cdot {bmatrix(B, decimals)} = {bmatrix(C, decimals)}")
-        c_texts = [[format_value(v, deg)[0] for v in row] for row in C]
-        b1, b2, _ = st.columns([1.3, 1, 2])
-        b1.button("Use result as A", on_click=use_result_as_a, args=(c_texts,), width="stretch",
-                  help="Put A·B into A, e.g. to multiply by B again")
-        b2.button("Clear", on_click=clear_matrices, width="stretch")
+        # determinant and inverse need a square matrix
+        s1, _ = st.columns([1, 2])
+        n = s1.selectbox("Size of A (n×n)", sizes, index=1, key="m_n")
+        with st.columns(2)[0] if n <= 3 else st.container():
+            st.markdown(f"**A** ({n}×{n})")
+            a_cells = matrix_editor("A", n, n)
+        st.caption(CELL_HINT)
+        try:
+            A = parse_matrix("A", a_cells)
+            d = mat_det(A)
+            inv = mat_inv(A) if op == "inv" else None
+        except CalcError as err:
+            if op == "inv" and "singular" in str(err):
+                st.latex(rf"\det(A) = 0")
+            st.error(str(err))
+        else:
+            decimals = st.toggle("Show decimals", key="m_decimals")
+            if op == "det":
+                st.latex(rf"\det {bmatrix(A, decimals).replace('bmatrix', 'vmatrix')} = "
+                         rf"{number_latex(d, decimals)}")
+                main, dec, _ = format_value(d, deg)
+                if dec and not decimals:
+                    st.caption(f"decimal: `{dec}`")
+            else:
+                st.latex(rf"A^{{-1}} = {bmatrix(inv, decimals)}")
+                st.caption(f"det(A) = {format_value(d, deg)[0]}")
+                with st.expander("Check: A · A⁻¹ = I"):
+                    ident = mat_mul(A, inv)
+                    st.latex(rf"{bmatrix(A, decimals)} \cdot {bmatrix(inv, decimals)} = "
+                             rf"{bmatrix(ident, decimals)}")
+                result_buttons(inv, True, "Put A⁻¹ into A")
