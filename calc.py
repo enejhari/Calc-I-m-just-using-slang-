@@ -1,30 +1,3 @@
-#!/usr/bin/env python3
-"""
-calc.py - a calculator with full complex-number support.
-
-Run it:
-    python calc.py                     open the GUI (fractions, roots and powers are drawn
-                                       like on paper: type / for a fraction, ^ for a power)
-    python calc.py "(2+3i)*(1-i)"      evaluate once and print the result
-    python calc.py --cli               interactive terminal mode
-    python calc.py --deg "sin(30)"     same, with angles in degrees
-
-Syntax:
-    + - * / ^  ( )  !          (also × ÷ − √ ∛ π ² ³ are understood)
-    i or j                     imaginary unit         e.g.  3+4i, 2i(1-i)
-    pi, π, e, ans              constants / last answer
-    2E5                        scientific notation (capital E; lowercase e is Euler's number)
-    2π, 3(1+i), (1+i)(1-i)     implicit multiplication
-    sqrt cbrt root(x,n) abs arg re im conj exp ln log log(x,b) log2
-    sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh
-    polar(r,θ) floor ceil round
-
-Exact rational arithmetic is used wherever possible (1/3 + 1/6 = 1/2,
-sqrt(-4) = 2i, sqrt(3+4i) = 2+i, (1+i)^8 = 16).  Otherwise results use
-principal complex values (e.g. ln(-1) = πi, i^i = e^(-π/2)).
-Note: ∛ / root(x,n) of a negative real with odd n returns the real root.
-"""
-
 import cmath
 import copy
 import math
@@ -668,6 +641,66 @@ def mat_mul(a, b):
             new_row.append(s)
         out.append(new_row)
     return out
+
+
+def _check_square(a):
+    if not a or any(len(row) != len(a) for row in a):
+        raise CalcError("The matrix must be square")
+
+
+def _negligible(v, scale):
+    """Zero test for pivots: exact for exact numbers, relative tolerance for floats."""
+    if isinstance(v, Q):
+        return v.is_zero()
+    return abs(complex(v)) <= 1e-12 * scale
+
+
+def _scale(a):
+    return max((abs(complex(x)) for row in a for x in row), default=0.0) or 1.0
+
+
+def _pivot_row(m, c):
+    """Row (from c down) with the largest entry in column c, for numerical stability."""
+    return max(range(c, len(m)), key=lambda r: abs(complex(m[r][c])))
+
+
+def mat_det(a):
+    """Determinant by Gaussian elimination (exact for exact entries)."""
+    _check_square(a)
+    m = [list(row) for row in a]
+    n, scale, det = len(m), _scale(a), Q(1)
+    for c in range(n):
+        p = _pivot_row(m, c)
+        if _negligible(m[p][c], scale):
+            return Q(0)
+        if p != c:
+            m[c], m[p] = m[p], m[c]
+            det = neg(det)
+        det = mul(det, m[c][c])
+        for r in range(c + 1, n):
+            f = div(m[r][c], m[c][c])
+            for k in range(c, n):
+                m[r][k] = sub(m[r][k], mul(f, m[c][k]))
+    return det
+
+
+def mat_inv(a):
+    """Inverse by Gauss-Jordan elimination (exact for exact entries)."""
+    _check_square(a)
+    n, scale = len(a), _scale(a)
+    m = [list(row) + [Q(1) if i == j else Q(0) for j in range(n)] for i, row in enumerate(a)]
+    for c in range(n):
+        p = _pivot_row(m, c)
+        if _negligible(m[p][c], scale):
+            raise CalcError("The matrix is singular (det = 0), so it has no inverse")
+        m[c], m[p] = m[p], m[c]
+        piv = m[c][c]
+        m[c] = [div(x, piv) for x in m[c]]
+        for r in range(n):
+            if r != c:
+                f = m[r][c]
+                m[r] = [sub(x, mul(f, y)) for x, y in zip(m[r], m[c])]
+    return [row[n:] for row in m]
 
 
 # --------------------------------------------------------------------------
